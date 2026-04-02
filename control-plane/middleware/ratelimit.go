@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -24,9 +25,13 @@ type RateLimiterStore struct {
 // NewRateLimiterStore creates a store that issues limiters at the given
 // requests-per-minute rate. Stale entries are cleaned every 5 minutes.
 func NewRateLimiterStore(requestsPerMinute int) *RateLimiterStore {
+	burst := requestsPerMinute / 3
+	if burst < 3 {
+		burst = 3
+	}
 	s := &RateLimiterStore{
 		rps:   rate.Limit(float64(requestsPerMinute) / 60.0),
-		burst: requestsPerMinute, // allow a burst equal to the per-minute cap
+		burst: burst, // burst = 1/3 of per-minute cap for tighter enforcement
 	}
 	go s.cleanup()
 	return s
@@ -73,6 +78,10 @@ func RateLimit(store *RateLimiterStore) func(http.Handler) http.Handler {
 			// chi's RealIP middleware sets X-Real-IP / X-Forwarded-For
 			if forwarded := r.Header.Get("X-Real-Ip"); forwarded != "" {
 				ip = forwarded
+			}
+			// Strip port from address — r.RemoteAddr is "ip:port"
+			if host, _, err := net.SplitHostPort(ip); err == nil {
+				ip = host
 			}
 
 			limiter := store.getLimiter(ip)

@@ -49,7 +49,11 @@ func loginCmd() *cobra.Command {
 				return fmt.Errorf("login failed: %w", err)
 			}
 
-			token, ok := resp["token"].(string)
+			token, ok := resp["access_token"].(string)
+			if !ok {
+				// Fallback to "token" key for compatibility.
+				token, ok = resp["token"].(string)
+			}
 			if !ok {
 				return fmt.Errorf("no token in response")
 			}
@@ -476,11 +480,11 @@ func pricingCmd() *cobra.Command {
 
 			fmt.Println("=== Room Pricing ===")
 			PrintTable([]Column{
-				{"Game", "game"},
-				{"Duration", "duration"},
-				{"Shards", "shard_cost"},
-				{"Max Players", "max_players"},
-				{"Hourly Cost", "hourly_cost"},
+				{"Slots", "slots"},
+				{"Weekly", "weekly"},
+				{"Monthly", "monthly"},
+				{"Quarterly", "quarterly"},
+				{"Yearly", "yearly"},
 			}, rows)
 			return nil
 		},

@@ -181,7 +181,7 @@ func (c *Client) doList(method, path string, body interface{}) ([]map[string]int
 	}
 
 	// Try common wrapper keys.
-	for _, key := range []string{"data", "items", "results", "nodes", "rooms", "users"} {
+	for _, key := range []string{"data", "items", "results", "nodes", "rooms", "users", "examples", "pricing"} {
 		if raw, ok := wrapper[key]; ok {
 			if items, ok := raw.([]interface{}); ok {
 				result := make([]map[string]interface{}, 0, len(items))
