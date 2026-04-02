@@ -1,0 +1,23 @@
+[Unit]
+Description=Dotachi Node Agent
+After=network-online.target softether.service
+Wants=network-online.target
+Requires=softether.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dotachi-node-agent
+Restart=always
+RestartSec=5
+EnvironmentFile=/etc/dotachi/node-agent.env
+WorkingDirectory=/etc/dotachi
+LimitNOFILE=65536
+
+# Hardening
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

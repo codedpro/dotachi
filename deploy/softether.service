@@ -1,0 +1,22 @@
+[Unit]
+Description=SoftEther VPN Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/vpnserver/vpnserver start
+ExecStop=/usr/local/vpnserver/vpnserver stop
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+WorkingDirectory=/usr/local/vpnserver
+LimitNOFILE=65536
+
+# Hardening
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target

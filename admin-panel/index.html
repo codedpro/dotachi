@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dotachi Admin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Toast container -->
+  <div id="toast-container"></div>
+
+  <!-- Login screen -->
+  <div id="login-screen" class="screen">
+    <div class="login-card">
+      <h1 class="logo">Dotachi <span class="accent">Admin</span></h1>
+      <form id="login-form" autocomplete="on">
+        <label for="login-phone">Phone</label>
+        <input type="tel" id="login-phone" placeholder="09000000000" required autocomplete="username">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password">
+        <button type="submit" class="btn btn-primary btn-full">
+          <span class="btn-text">Sign In</span>
+          <span class="spinner hidden"></span>
+        </button>
+      </form>
+      <div class="login-api">
+        <label for="login-api-url">API Base URL</label>
+        <input type="url" id="login-api-url" placeholder="http://localhost:8080">
+      </div>
+    </div>
+  </div>
+
+  <!-- Dashboard screen -->
+  <div id="dashboard-screen" class="screen hidden">
+    <!-- Header -->
+    <header id="header">
+      <div class="header-left">
+        <h1 class="logo-sm">Dotachi <span class="accent">Admin</span></h1>
+      </div>
+      <div class="header-center">
+        <input type="url" id="api-url-input" placeholder="API Base URL" title="API Base URL">
+      </div>
+      <div class="header-right">
+        <span id="user-display" class="user-badge"></span>
+        <button id="logout-btn" class="btn btn-sm btn-ghost">Logout</button>
+      </div>
+    </header>
+
+    <!-- Tab navigation -->
+    <nav id="tab-nav">
+      <button class="tab active" data-tab="nodes">Nodes</button>
+      <button class="tab" data-tab="rooms">Rooms</button>
+      <button class="tab" data-tab="users">Users</button>
+      <button class="tab" data-tab="monitor">Live Monitor</button>
+    </nav>
+
+    <!-- Tab panels -->
+    <main id="main">
+
+      <!-- Nodes tab -->
+      <section id="tab-nodes" class="tab-panel active">
+        <div class="panel-header">
+          <h2>Nodes</h2>
+          <button class="btn btn-primary btn-sm" id="add-node-toggle">+ Add Node</button>
+        </div>
+
+        <div id="add-node-form" class="form-card hidden">
+          <h3>Add Node</h3>
+          <div class="form-grid">
+            <div class="field">
+              <label>Name</label>
+              <input type="text" id="node-name" placeholder="eu-west-1">
+            </div>
+            <div class="field">
+              <label>Host</label>
+              <input type="text" id="node-host" placeholder="192.168.1.100">
+            </div>
+            <div class="field">
+              <label>API Port</label>
+              <input type="number" id="node-port" value="7443" min="1" max="65535">
+            </div>
+            <div class="field">
+              <label>API Secret</label>
+              <input type="password" id="node-secret" placeholder="secret">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" id="add-node-submit">Add Node</button>
+            <button class="btn btn-ghost" id="add-node-cancel">Cancel</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table id="nodes-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Host</th>
+                <th>Port</th>
+                <th>Status</th>
+                <th>Rooms</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="nodes-tbody"></tbody>
+          </table>
+          <div id="nodes-empty" class="empty-state hidden">No nodes registered yet.</div>
+          <div id="nodes-loading" class="loading-state"><span class="spinner"></span> Loading nodes...</div>
+        </div>
+      </section>
+
+      <!-- Rooms tab -->
+      <section id="tab-rooms" class="tab-panel">
+        <div class="panel-header">
+          <h2>Rooms</h2>
+          <button class="btn btn-primary btn-sm" id="create-room-toggle">+ Create Room</button>
+        </div>
+
+        <div id="create-room-form" class="form-card hidden">
+          <h3>Create Room</h3>
+          <div class="form-grid">
+            <div class="field">
+              <label>Room Name</label>
+              <input type="text" id="room-name" placeholder="My Game Room">
+            </div>
+            <div class="field">
+              <label>Node</label>
+              <select id="room-node"></select>
+            </div>
+            <div class="field">
+              <label>Max Players: <span id="room-max-val">10</span></label>
+              <input type="range" id="room-max" min="2" max="100" value="10">
+            </div>
+            <div class="field">
+              <label>Game Tag</label>
+              <input type="text" id="room-game-tag" placeholder="e.g. battle-royale">
+            </div>
+            <div class="field">
+              <label>Expires At</label>
+              <input type="datetime-local" id="room-expires-at">
+            </div>
+            <div class="field">
+              <label class="checkbox-label">
+                <input type="checkbox" id="room-private">
+                Private Room
+              </label>
+            </div>
+            <div class="field" id="room-password-field" style="display:none">
+              <label>Password</label>
+              <input type="password" id="room-password" placeholder="Room password">
+            </div>
+            <div class="field">
+              <label class="checkbox-label">
+                <input type="checkbox" id="room-shared">
+                Shared Room
+              </label>
+            </div>
+            <div class="field" id="room-hourly-cost-field" style="display:none">
+              <label>Hourly Cost (shards)</label>
+              <input type="number" id="room-hourly-cost" placeholder="100" min="0">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" id="create-room-submit">Create Room</button>
+            <button class="btn btn-ghost" id="create-room-cancel">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters-bar">
+          <input type="text" id="rooms-search" placeholder="Search by name..." class="filter-input">
+          <select id="rooms-node-filter" class="filter-select">
+            <option value="">All Nodes</option>
+          </select>
+          <select id="rooms-status-filter" class="filter-select">
+            <option value="">All Visibility</option>
+            <option value="false">Public</option>
+            <option value="true">Private</option>
+          </select>
+        </div>
+
+        <div class="table-wrap">
+          <table id="rooms-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Hub</th>
+                <th>Node</th>
+                <th>Owner</th>
+                <th>Players</th>
+                <th>Expires</th>
+                <th>Type</th>
+                <th>Visibility</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="rooms-tbody"></tbody>
+          </table>
+          <div id="rooms-empty" class="empty-state hidden">No rooms found.</div>
+          <div id="rooms-loading" class="loading-state"><span class="spinner"></span> Loading rooms...</div>
+        </div>
+      </section>
+
+      <!-- Users tab -->
+      <section id="tab-users" class="tab-panel">
+        <div class="panel-header">
+          <h2>Users</h2>
+        </div>
+
+        <div class="filters-bar">
+          <input type="text" id="users-search" placeholder="Search by phone or display name..." class="filter-input filter-wide">
+        </div>
+
+        <div class="table-wrap">
+          <table id="users-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Phone</th>
+                <th>Display Name</th>
+                <th>Shard Balance</th>
+                <th>Role</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody"></tbody>
+          </table>
+          <div id="users-empty" class="empty-state hidden">No users found.</div>
+          <div id="users-loading" class="loading-state"><span class="spinner"></span> Loading users...</div>
+        </div>
+      </section>
+
+      <!-- Live Monitor tab -->
+      <section id="tab-monitor" class="tab-panel">
+        <div class="panel-header">
+          <h2>Live Monitor</h2>
+          <span id="monitor-refresh-badge" class="refresh-badge">Auto-refresh: 10s</span>
+        </div>
+
+        <div class="stats-row" id="monitor-stats">
+          <div class="stat-card">
+            <div class="stat-label">Active Rooms</div>
+            <div class="stat-value" id="stat-active-rooms">--</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Players</div>
+            <div class="stat-value" id="stat-total-players">--</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Nodes Online</div>
+            <div class="stat-value" id="stat-nodes-online">--</div>
+          </div>
+          <div class="stat-card stat-card-shard">
+            <div class="stat-label">Shards in Circulation</div>
+            <div class="stat-value shard-value" id="stat-total-shards">--</div>
+          </div>
+          <div class="stat-card stat-card-shard">
+            <div class="stat-label">Daily Shard Revenue</div>
+            <div class="stat-value shard-value" id="stat-daily-revenue">--</div>
+          </div>
+        </div>
+
+        <p class="note">
+          Note: Detailed traffic stats (bytes in/out) require a proxy endpoint on the control plane to relay hub status from nodes behind firewalls. Currently showing member counts from the rooms list.
+        </p>
+
+        <div class="table-wrap">
+          <table id="monitor-table">
+            <thead>
+              <tr>
+                <th>Room</th>
+                <th>Node</th>
+                <th>Players</th>
+                <th>Max</th>
+                <th>Capacity</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="monitor-tbody"></tbody>
+          </table>
+          <div id="monitor-empty" class="empty-state hidden">No active rooms.</div>
+          <div id="monitor-loading" class="loading-state"><span class="spinner"></span> Loading monitor data...</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Assign Owner Modal -->
+  <div id="assign-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Assign Room Owner</h3>
+        <button class="modal-close" id="assign-modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Room: <strong id="assign-room-name"></strong></p>
+        <input type="text" id="assign-search" placeholder="Search users by phone or name..." class="filter-input filter-wide">
+        <div class="table-wrap modal-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Phone</th>
+                <th>Name</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="assign-users-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shard Modal (Add/Remove) -->
+  <div id="shard-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="shard-modal-title">Add Shards</h3>
+        <button class="modal-close" id="shard-modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>User: <strong id="shard-modal-user"></strong></p>
+        <div class="field" style="margin-bottom: 16px;">
+          <label>Amount</label>
+          <input type="number" id="shard-amount" placeholder="1000" min="1">
+        </div>
+        <div class="field" style="margin-bottom: 16px;">
+          <label>Description</label>
+          <input type="text" id="shard-description" placeholder="Reason for adjustment...">
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="shard-modal-submit">Confirm</button>
+          <button class="btn btn-ghost" id="shard-modal-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

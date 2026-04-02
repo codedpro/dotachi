@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>دوتاچی</title>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: 'Vazirmatn', sans-serif;
+        background: #0a0a1a;
+        color: #e8e8f0;
+        min-height: 100vh;
+        overflow: hidden;
+        direction: rtl;
+        text-align: right;
+      }
+      #root { min-height: 100vh; }
+
+      /* Scrollbar styling */
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: #0a0a1a; }
+      ::-webkit-scrollbar-thumb { background: #333355; border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: #444466; }
+
+      /* Selection */
+      ::selection { background: #7c4dff44; color: #fff; }
+
+      /* Animations */
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+      }
+      @keyframes glow {
+        0%, 100% { box-shadow: 0 0 20px rgba(124, 77, 255, 0.15); }
+        50% { box-shadow: 0 0 40px rgba(124, 77, 255, 0.3); }
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes slideIn {
+        from { opacity: 0; transform: translateX(12px); }
+        to { opacity: 1; transform: translateX(0); }
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      .animate-fade { animation: fadeIn 0.3s ease-out; }
+      .animate-slide { animation: slideIn 0.3s ease-out; }
+
+      /* Monospace for technical data */
+      code, .mono, [data-mono] {
+        font-family: monospace;
+        direction: ltr;
+        text-align: left;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

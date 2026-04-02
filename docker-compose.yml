@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dotachi
+      POSTGRES_PASSWORD: dotachi
+      POSTGRES_DB: dotachi
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dotachi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  control-plane:
+    build: ./control-plane
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: "postgres://dotachi:dotachi@postgres:5432/dotachi?sslmode=disable"
+      JWT_SECRET: "dev-secret-change-in-prod"
+      LISTEN_ADDR: ":8080"
+      ADMIN_PHONE: "09000000000"
+      ADMIN_PASSWORD: "admin123"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  node-agent:
+    build: ./node-agent
+    ports:
+      - "7443:7443"
+    environment:
+      API_SECRET: "node-secret-change-in-prod"
+      LISTEN_ADDR: ":7443"
+      VPNCMD_PATH: "/usr/local/vpnserver/vpncmd"
+      SERVER_HOST: "host.docker"
+    # In real deployment, node-agent runs on bare metal with SoftEther
+    # This is for development/testing only
+
+  admin-panel:
+    build: ./admin-panel
+    ports:
+      - "8081:80"
+    depends_on:
+      - control-plane
+
+volumes:
+  pgdata:

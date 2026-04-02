@@ -1,0 +1,42 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+dotachi-cp
+dotachi-node
+dotachi-cli
+
+# Go
+vendor/
+
+# Database
+*.db
+*.sqlite
+
+# Environment
+.env
+*.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+dist/
+
+# Docker
+pgdata/
+
+# Build artifacts
+build/
+tmp/
+node-agent/node-agent
