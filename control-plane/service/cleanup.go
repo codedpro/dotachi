@@ -81,6 +81,9 @@ func cleanEmptyRooms(idleTimeout time.Duration) {
 		return
 	}
 
+	const maxNodeCallsPerCycle = 20
+	nodeCallCount := 0
+
 	now := time.Now()
 	for _, r := range candidates {
 		if r.memberCount > 0 {
@@ -94,6 +97,11 @@ func cleanEmptyRooms(idleTimeout time.Duration) {
 			r.id, r.hubName, r.lastActivity.Format(time.RFC3339))
 
 		// Delete the hub on the node (best effort)
+		if nodeCallCount >= maxNodeCallsPerCycle {
+			log.Printf("[cleanup] skipping remaining node calls (limit reached)")
+			break
+		}
+		nodeCallCount++
 		if err := DeleteHub(r.host, r.apiPort, r.apiSecret, r.hubName); err != nil {
 			log.Printf("[cleanup] failed to delete hub %s on node %d: %v", r.hubName, r.nodeID, err)
 		}
@@ -145,7 +153,15 @@ func cleanExpiredRooms() {
 		return
 	}
 
+	const maxNodeCallsPerCycle = 20
+	nodeCallCount := 0
+
 	for _, r := range expired {
+		if nodeCallCount >= maxNodeCallsPerCycle {
+			log.Printf("[cleanup] skipping remaining expired room node calls (limit reached)")
+			break
+		}
+
 		log.Printf("[cleanup] deactivating expired room id=%d hub=%s", r.id, r.hubName)
 
 		// Remove all members from the VPN hub (best effort)
@@ -156,7 +172,9 @@ func cleanExpiredRooms() {
 			for memberRows.Next() {
 				var vpnUser string
 				if memberRows.Scan(&vpnUser) == nil {
+					nodeCallCount++
 					DisconnectUser(r.host, r.apiPort, r.apiSecret, r.hubName, vpnUser)
+					nodeCallCount++
 					DeleteVPNUser(r.host, r.apiPort, r.apiSecret, r.hubName, vpnUser)
 				}
 			}
@@ -179,6 +197,7 @@ func cleanExpiredRooms() {
 		db.DB.Exec("DELETE FROM room_members WHERE room_id = $1", r.id)
 
 		// Delete hub on node
+		nodeCallCount++
 		if err := DeleteHub(r.host, r.apiPort, r.apiSecret, r.hubName); err != nil {
 			log.Printf("[cleanup] failed to delete hub %s on node %d: %v", r.hubName, r.nodeID, err)
 		}
@@ -328,12 +347,13 @@ func chargeSharedSessions() {
 
 	for _, s := range sessions {
 		elapsed := time.Since(s.startedAt)
-		totalHours := int(math.Floor(elapsed.Hours()))
-		if totalHours < 1 {
-			continue // less than 1 hour elapsed, don't charge yet
+		totalMinutes := int(math.Floor(elapsed.Minutes()))
+		if totalMinutes < 1 {
+			continue // less than 1 minute elapsed, don't charge yet
 		}
 
-		expectedCharge := totalHours * s.hourlyCost
+		// Charge proportionally: (minutes / 60) * hourly_cost, rounded up to nearest shard
+		expectedCharge := int(math.Ceil(float64(totalMinutes) * float64(s.hourlyCost) / 60.0))
 		owed := expectedCharge - s.shardsCharged
 		if owed <= 0 {
 			continue // already charged for this period
@@ -350,6 +370,7 @@ func chargeSharedSessions() {
 		var balance int
 		err := tx.QueryRow("SELECT shard_balance FROM users WHERE id = $1 FOR UPDATE", s.userID).Scan(&balance)
 		if err != nil {
+			log.Printf("[billing] failed to query balance for user %d: %v", s.userID, err)
 			tx.Rollback()
 			continue
 		}
@@ -419,7 +440,7 @@ func chargeSharedSessions() {
 			`INSERT INTO shard_transactions (user_id, amount, balance_after, tx_type, description, ref_id)
 			VALUES ($1, $2, $3, 'shared_hourly', $4, $5)`,
 			s.userID, -owed, newBalance,
-			fmt.Sprintf("Shared room hourly charge (%d hours)", totalHours),
+			fmt.Sprintf("Shared room charge (%d minutes)", totalMinutes),
 			s.roomID,
 		)
 		tx.Exec(

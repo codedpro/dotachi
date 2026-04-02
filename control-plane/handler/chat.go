@@ -4,11 +4,18 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/dotachi/control-plane/db"
 	"github.com/dotachi/control-plane/middleware"
 	"github.com/go-chi/chi/v5"
 )
+
+func sanitizeContent(s string) string {
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
+}
 
 type ChatHandler struct{}
 
@@ -45,6 +52,8 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+
+	req.Content = sanitizeContent(req.Content)
 
 	contentLen := len([]rune(req.Content))
 	if contentLen < 1 || contentLen > 500 {

@@ -72,6 +72,10 @@ export function CheckVPNReady() {
   return window["go"]["main"]["App"]["CheckVPNReady"]();
 }
 
+export function IsSplitTunnelActive() {
+  return window["go"]["main"]["App"]["IsSplitTunnelActive"]();
+}
+
 export function SetServerURL(url) {
   return window["go"]["main"]["App"]["SetServerURL"](url);
 }

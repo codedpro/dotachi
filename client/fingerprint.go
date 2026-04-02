@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	crypto_rand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -73,6 +76,14 @@ func collectFingerprint() string {
 	if len(components) == 0 {
 		if v := volumeSerial(); v != "" {
 			components = append(components, "VOL:"+v)
+		}
+	}
+
+	// If we still have fewer than 2 components, the fingerprint is weak.
+	// Use a persistent random ID stored on disk as fallback.
+	if len(components) < 2 {
+		if persistID := loadOrCreatePersistentID(); persistID != "" {
+			components = append(components, "PERSIST:"+persistID)
 		}
 	}
 
@@ -181,6 +192,30 @@ func isGenericID(val string) bool {
 		}
 	}
 	return false
+}
+
+// loadOrCreatePersistentID returns a stable random ID persisted to disk.
+// Used as a fallback when fewer than 2 hardware sources are available.
+func loadOrCreatePersistentID() string {
+	dir, _ := os.UserConfigDir()
+	path := filepath.Join(dir, "Dotachi", ".device_id")
+
+	// Try to read existing
+	data, err := os.ReadFile(path)
+	if err == nil && len(data) >= 32 {
+		return strings.TrimSpace(string(data))
+	}
+
+	// Generate new
+	b := make([]byte, 16)
+	if _, err := crypto_rand.Read(b); err != nil {
+		return ""
+	}
+	id := hex.EncodeToString(b)
+
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte(id), 0o600)
+	return id
 }
 
 // GetDeviceFingerprint is exposed to the Wails frontend.

@@ -89,6 +89,9 @@ type App struct {
 	// Ping measurement state (protected by mu)
 	pingStats   PingStats
 	pingHistory []int // last 20 ping results (-1 = failed)
+
+	// Split tunnel state (protected by mu)
+	splitTunnelActive bool
 }
 
 type vpnCredentials struct {
@@ -203,8 +206,11 @@ func (a *App) doRequest(method, path string, body interface{}, out interface{}) 
 		return fmt.Errorf("request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if a.token != "" {
-		req.Header.Set("Authorization", "Bearer "+a.token)
+	a.mu.Lock()
+	token := a.token
+	a.mu.Unlock()
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -260,7 +266,9 @@ func (a *App) Register(phone, password, displayName, referralCode string) (*Toke
 	if err := a.doRequest("POST", "/auth/register", payload, &tok); err != nil {
 		return nil, err
 	}
+	a.mu.Lock()
 	a.token = tok.Token
+	a.mu.Unlock()
 	return &tok, nil
 }
 
@@ -275,7 +283,9 @@ func (a *App) Login(phone, password string) (*TokenResponse, error) {
 	if err := a.doRequest("POST", "/auth/login", payload, &tok); err != nil {
 		return nil, err
 	}
+	a.mu.Lock()
 	a.token = tok.Token
+	a.mu.Unlock()
 	return &tok, nil
 }
 
@@ -458,6 +468,13 @@ func (a *App) ConnectVPN(host, hub, username, password, subnet string) error {
 		if err := a.configureSplitTunnel(subnet); err != nil {
 			fmt.Fprintf(os.Stderr, "[vpn] split tunnel config failed (non-fatal): %v\n", err)
 			// Non-fatal: VPN still works, just all traffic goes through it
+			a.mu.Lock()
+			a.splitTunnelActive = false
+			a.mu.Unlock()
+		} else {
+			a.mu.Lock()
+			a.splitTunnelActive = true
+			a.mu.Unlock()
 		}
 	}
 
@@ -657,6 +674,8 @@ func (a *App) StopVPN() error {
 	subnet := ""
 	if a.vpnCreds != nil {
 		subnet = a.vpnCreds.Subnet
+		a.vpnCreds.Password = ""
+		a.vpnCreds = nil
 	}
 	a.mu.Unlock()
 
@@ -690,6 +709,13 @@ func (a *App) GetVPNStatus() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.vpnStatus
+}
+
+// IsSplitTunnelActive returns whether split tunneling was successfully configured.
+func (a *App) IsSplitTunnelActive() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.splitTunnelActive
 }
 
 // ---------------------------------------------------------------------------
@@ -880,7 +906,7 @@ func (a *App) findVPNGateway() string {
 			parts := strings.SplitN(trimmed, ":", 2)
 			if len(parts) == 2 {
 				gw := strings.TrimSpace(parts[1])
-				if gw != "" {
+				if gw != "" && net.ParseIP(gw) != nil {
 					return gw
 				}
 			}

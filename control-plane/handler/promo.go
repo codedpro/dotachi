@@ -91,7 +91,12 @@ func (h *PromoHandler) Redeem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	const maxShardBalance = 999_999_999 // ~1 billion shards
 	newBalance := balance + shardAmount
+	if newBalance > maxShardBalance {
+		writeError(w, http.StatusBadRequest, "balance would exceed maximum")
+		return
+	}
 	_, err = tx.Exec("UPDATE users SET shard_balance = $1 WHERE id = $2", newBalance, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update balance")

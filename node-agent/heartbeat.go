@@ -43,6 +43,13 @@ var heartbeatClient = &http.Client{Timeout: 15 * time.Second}
 // StartHeartbeat sends periodic status reports to the control plane.
 // If the control plane is unreachable, it keeps trying -- the node
 // operates independently regardless.
+//
+// NOTE: The heartbeat goroutine has no shutdown mechanism (no context
+// cancellation or quit channel). This is intentional -- the goroutine's
+// lifetime matches the process lifetime, so it will be cleaned up when
+// the process exits. Adding graceful shutdown here would add complexity
+// with no practical benefit since the node-agent runs as a long-lived
+// daemon and the heartbeat should run for as long as the process does.
 func StartHeartbeat(controlPlaneURL, apiSecret, nodeName, nodeHost string, nodePort int, se *softether.Client) {
 	go func() {
 		log.Printf("[heartbeat] started -- reporting to %s every 30s as %q", controlPlaneURL, nodeName)

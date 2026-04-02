@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/dotachi/control-plane/db"
@@ -45,6 +46,8 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "password must be at least 4 characters")
 		return
 	}
+	req.DisplayName = sanitizeDisplayName(req.DisplayName)
+
 	if len(req.DisplayName) < 1 || len(req.DisplayName) > 64 {
 		writeError(w, http.StatusBadRequest, "display_name must be 1-64 characters")
 		return
@@ -82,6 +85,24 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		err := db.DB.QueryRow("SELECT id FROM users WHERE referral_code = $1", req.ReferralCode).Scan(&rid)
 		if err == nil {
 			referrerID = &rid
+		}
+	}
+
+	// Prevent referral self-abuse: reject bonus if referrer has the same device fingerprint
+	if referrerID != nil && req.DeviceFingerprint != "" {
+		var referrerFP sql.NullString
+		db.DB.QueryRow("SELECT device_fingerprint FROM users WHERE id = $1", *referrerID).Scan(&referrerFP)
+		if referrerFP.Valid && referrerFP.String == req.DeviceFingerprint {
+			referrerID = nil // same device, no bonus
+		}
+	}
+
+	// Prevent referral self-abuse: reject bonus if referrer has the same phone number
+	if referrerID != nil {
+		var referrerPhone string
+		db.DB.QueryRow("SELECT phone FROM users WHERE id = $1", *referrerID).Scan(&referrerPhone)
+		if referrerPhone == req.Phone {
+			referrerID = nil // same phone, no bonus
 		}
 	}
 
@@ -261,6 +282,8 @@ func (h *AuthHandler) UpdateDisplayName(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	req.DisplayName = sanitizeDisplayName(req.DisplayName)
+
 	if len(req.DisplayName) < 1 || len(req.DisplayName) > 64 {
 		writeError(w, http.StatusBadRequest, "display_name must be 1-64 characters")
 		return
@@ -290,6 +313,10 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	if len(req.NewPassword) < 4 {
 		writeError(w, http.StatusBadRequest, "new password must be at least 4 characters")
+		return
+	}
+	if len(req.NewPassword) > 128 {
+		writeError(w, http.StatusBadRequest, "password too long (max 128 characters)")
 		return
 	}
 
@@ -349,6 +376,14 @@ func (h *AuthHandler) MyReferral(w http.ResponseWriter, r *http.Request) {
 		"referral_count": referralCount,
 		"total_earned":   totalEarned,
 	})
+}
+
+func sanitizeDisplayName(name string) string {
+	name = strings.ReplaceAll(name, "&", "&amp;")
+	name = strings.ReplaceAll(name, "<", "&lt;")
+	name = strings.ReplaceAll(name, ">", "&gt;")
+	name = strings.TrimSpace(name)
+	return name
 }
 
 func (h *AuthHandler) generateToken(userID int64, isAdmin bool) (string, error) {

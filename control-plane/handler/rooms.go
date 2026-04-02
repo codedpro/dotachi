@@ -352,10 +352,16 @@ func (h *RoomHandler) PurchaseRoom(w http.ResponseWriter, r *http.Request) {
 
 	// Generate hub name and subnet
 	var maxID int64
-	tx.QueryRow("SELECT COALESCE(MAX(id), 0) FROM rooms").Scan(&maxID)
+	tx.QueryRow("SELECT COALESCE(MAX(id), 0) FROM rooms FOR UPDATE").Scan(&maxID)
 	nextNum := maxID + 1
 	hubName := fmt.Sprintf("hub_%d", nextNum)
 	subnet := fmt.Sprintf("10.10.%d.0/24", nextNum)
+
+	// Validate password length
+	if len(req.Password) > 128 {
+		writeError(w, http.StatusBadRequest, "password too long (max 128 characters)")
+		return
+	}
 
 	// Hash password if private
 	var passwordHash *string
@@ -588,6 +594,14 @@ func (h *RoomHandler) SetRole(w http.ResponseWriter, r *http.Request) {
 
 	if req.Role != "admin" && req.Role != "member" {
 		writeError(w, http.StatusBadRequest, "role must be 'admin' or 'member' — use transfer endpoint for ownership")
+		return
+	}
+
+	// Validate target user is a member of the room
+	var memberExists int
+	db.DB.QueryRow("SELECT COUNT(*) FROM room_members WHERE room_id = $1 AND user_id = $2", roomIDInt, req.UserID).Scan(&memberExists)
+	if memberExists == 0 {
+		writeError(w, http.StatusBadRequest, "user is not a member of this room")
 		return
 	}
 
@@ -845,28 +859,48 @@ func (h *RoomHandler) Join(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Insert room_role as member if not exists
-	tx.Exec(
+	if _, err := tx.Exec(
 		`INSERT INTO room_roles (room_id, user_id, role) VALUES ($1, $2, 'member')
 		ON CONFLICT (room_id, user_id) DO NOTHING`,
 		room.ID, userID,
-	)
+	); err != nil {
+		tx.Rollback()
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 
 	// For shared rooms: create shared_session
 	if room.IsShared {
-		tx.Exec(
+		if _, err := tx.Exec(
 			"INSERT INTO shared_sessions (user_id, room_id) VALUES ($1, $2)",
 			userID, room.ID,
-		)
+		); err != nil {
+			tx.Rollback()
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
+		}
 	}
 
 	// Update last_activity
-	tx.Exec("UPDATE rooms SET last_activity = CURRENT_TIMESTAMP WHERE id = $1", room.ID)
+	if _, err := tx.Exec("UPDATE rooms SET last_activity = CURRENT_TIMESTAMP WHERE id = $1", room.ID); err != nil {
+		tx.Rollback()
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 
 	// Record play session start
-	tx.Exec("INSERT INTO play_sessions (user_id, room_id) VALUES ($1, $2)", userID, room.ID)
+	if _, err := tx.Exec("INSERT INTO play_sessions (user_id, room_id) VALUES ($1, $2)", userID, room.ID); err != nil {
+		tx.Rollback()
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 
 	// Increment total_sessions
-	tx.Exec("UPDATE users SET total_sessions = total_sessions + 1 WHERE id = $1", userID)
+	if _, err := tx.Exec("UPDATE users SET total_sessions = total_sessions + 1 WHERE id = $1", userID); err != nil {
+		tx.Rollback()
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 
 	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
@@ -913,7 +947,9 @@ func (h *RoomHandler) Leave(w http.ResponseWriter, r *http.Request) {
 	// Delete VPN user on node (best effort)
 	service.DeleteVPNUser(node.Host, node.APIPort, node.APISecret, room.HubName, vpnUsername)
 
-	db.DB.Exec("DELETE FROM room_members WHERE room_id = $1 AND user_id = $2", room.ID, userID)
+	if _, err := db.DB.Exec("DELETE FROM room_members WHERE room_id = $1 AND user_id = $2", room.ID, userID); err != nil {
+		log.Printf("[rooms] warning: failed to delete room member (room=%d, user=%d): %v", room.ID, userID, err)
+	}
 
 	// For shared rooms: close shared session and charge
 	if room.IsShared {
@@ -924,14 +960,18 @@ func (h *RoomHandler) Leave(w http.ResponseWriter, r *http.Request) {
 	var role string
 	err = db.DB.QueryRow("SELECT role FROM room_roles WHERE room_id = $1 AND user_id = $2", room.ID, userID).Scan(&role)
 	if err == nil && role != "owner" {
-		db.DB.Exec("DELETE FROM room_roles WHERE room_id = $1 AND user_id = $2", room.ID, userID)
+		if _, err := db.DB.Exec("DELETE FROM room_roles WHERE room_id = $1 AND user_id = $2", room.ID, userID); err != nil {
+			log.Printf("[rooms] warning: failed to delete room role (room=%d, user=%d): %v", room.ID, userID, err)
+		}
 	}
 
 	// Close play session and update user stats
 	closePlaySession(userID, room.ID)
 
 	// Update room last_activity
-	db.DB.Exec("UPDATE rooms SET last_activity = CURRENT_TIMESTAMP WHERE id = $1", room.ID)
+	if _, err := db.DB.Exec("UPDATE rooms SET last_activity = CURRENT_TIMESTAMP WHERE id = $1", room.ID); err != nil {
+		log.Printf("[rooms] warning: failed to update room last_activity (room=%d): %v", room.ID, err)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "left room successfully"})
 }
@@ -964,6 +1004,10 @@ func (h *RoomHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 
 	if len(req.Password) < 4 {
 		writeError(w, http.StatusBadRequest, "password must be at least 4 characters")
+		return
+	}
+	if len(req.Password) > 128 {
+		writeError(w, http.StatusBadRequest, "password too long (max 128 characters)")
 		return
 	}
 
@@ -1103,6 +1147,19 @@ func (h *RoomHandler) Unban(w http.ResponseWriter, r *http.Request) {
 
 func (h *RoomHandler) Members(w http.ResponseWriter, r *http.Request) {
 	roomID := chi.URLParam(r, "id")
+	userID := middleware.GetUserID(r.Context())
+	isAdmin := middleware.GetIsAdmin(r.Context())
+	if !isAdmin {
+		// Check if user is member OR room is not private
+		var isMember int
+		db.DB.QueryRow("SELECT COUNT(*) FROM room_members WHERE room_id = $1 AND user_id = $2", roomID, userID).Scan(&isMember)
+		var isPrivate bool
+		db.DB.QueryRow("SELECT is_private FROM rooms WHERE id = $1", roomID).Scan(&isPrivate)
+		if isPrivate && isMember == 0 {
+			writeError(w, http.StatusForbidden, "you must be a member to view this room's members")
+			return
+		}
+	}
 
 	rows, err := db.DB.Query(`
 		SELECT rm.user_id, u.display_name, rm.joined_at
@@ -1384,8 +1441,15 @@ func (h *RoomHandler) JoinInvite(w http.ResponseWriter, r *http.Request) {
 	).Scan(&existingUsername, &existingPassword)
 	if err == nil {
 		// Already a member, just increment used_count and return credentials
-		db.DB.Exec("UPDATE room_invites SET used_count = used_count + 1 WHERE id = $1", inviteID)
-		tx.Commit()
+		if _, err := tx.Exec("UPDATE room_invites SET used_count = used_count + 1 WHERE id = $1", inviteID); err != nil {
+			tx.Rollback()
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to commit transaction")
+			return
+		}
 		node, err := getNodeByID(room.NodeID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "node not found")
@@ -1441,33 +1505,57 @@ func (h *RoomHandler) JoinInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Insert room_role as member if not exists
-	tx.Exec(
+	if _, err := tx.Exec(
 		`INSERT INTO room_roles (room_id, user_id, role) VALUES ($1, $2, 'member')
 		ON CONFLICT (room_id, user_id) DO NOTHING`,
 		room.ID, userID,
-	)
+	); err != nil {
+		tx.Rollback()
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 
 	// For shared rooms: create shared_session
 	if room.IsShared {
-		tx.Exec("INSERT INTO shared_sessions (user_id, room_id) VALUES ($1, $2)", userID, room.ID)
+		if _, err := tx.Exec("INSERT INTO shared_sessions (user_id, room_id) VALUES ($1, $2)", userID, room.ID); err != nil {
+			tx.Rollback()
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
+		}
 	}
 
 	// Update last_activity
-	tx.Exec("UPDATE rooms SET last_activity = CURRENT_TIMESTAMP WHERE id = $1", room.ID)
+	if _, err := tx.Exec("UPDATE rooms SET last_activity = CURRENT_TIMESTAMP WHERE id = $1", room.ID); err != nil {
+		tx.Rollback()
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 
 	// Record play session start
-	tx.Exec("INSERT INTO play_sessions (user_id, room_id) VALUES ($1, $2)", userID, room.ID)
+	if _, err := tx.Exec("INSERT INTO play_sessions (user_id, room_id) VALUES ($1, $2)", userID, room.ID); err != nil {
+		tx.Rollback()
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 
 	// Increment total_sessions
-	tx.Exec("UPDATE users SET total_sessions = total_sessions + 1 WHERE id = $1", userID)
+	if _, err := tx.Exec("UPDATE users SET total_sessions = total_sessions + 1 WHERE id = $1", userID); err != nil {
+		tx.Rollback()
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	// Increment invite used_count (inside the transaction to avoid race condition)
+	if _, err := tx.Exec("UPDATE room_invites SET used_count = used_count + 1 WHERE id = $1", inviteID); err != nil {
+		tx.Rollback()
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 
 	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
-
-	// Increment invite used_count (outside the main transaction, best effort)
-	db.DB.Exec("UPDATE room_invites SET used_count = used_count + 1 WHERE id = $1", inviteID)
 
 	writeJSON(w, http.StatusOK, model.JoinResponse{
 		VPNHost:     node.Host,
@@ -1560,7 +1648,9 @@ func removeMemberFromRoom(room *model.Room, targetUserID int64) error {
 	service.DisconnectUser(node.Host, node.APIPort, node.APISecret, room.HubName, vpnUsername)
 	service.DeleteVPNUser(node.Host, node.APIPort, node.APISecret, room.HubName, vpnUsername)
 
-	db.DB.Exec("DELETE FROM room_members WHERE room_id = $1 AND user_id = $2", room.ID, targetUserID)
+	if _, err := db.DB.Exec("DELETE FROM room_members WHERE room_id = $1 AND user_id = $2", room.ID, targetUserID); err != nil {
+		log.Printf("[rooms] warning: failed to delete room member (room=%d, user=%d): %v", room.ID, targetUserID, err)
+	}
 
 	// For shared rooms: close shared session and charge
 	if room.IsShared {
@@ -1571,14 +1661,18 @@ func removeMemberFromRoom(room *model.Room, targetUserID int64) error {
 	var role string
 	roleErr := db.DB.QueryRow("SELECT role FROM room_roles WHERE room_id = $1 AND user_id = $2", room.ID, targetUserID).Scan(&role)
 	if roleErr == nil && role != "owner" {
-		db.DB.Exec("DELETE FROM room_roles WHERE room_id = $1 AND user_id = $2", room.ID, targetUserID)
+		if _, err := db.DB.Exec("DELETE FROM room_roles WHERE room_id = $1 AND user_id = $2", room.ID, targetUserID); err != nil {
+			log.Printf("[rooms] warning: failed to delete room role (room=%d, user=%d): %v", room.ID, targetUserID, err)
+		}
 	}
 
 	// Close play session and update user stats
 	closePlaySession(targetUserID, room.ID)
 
 	// Update room last_activity
-	db.DB.Exec("UPDATE rooms SET last_activity = CURRENT_TIMESTAMP WHERE id = $1", room.ID)
+	if _, err := db.DB.Exec("UPDATE rooms SET last_activity = CURRENT_TIMESTAMP WHERE id = $1", room.ID); err != nil {
+		log.Printf("[rooms] warning: failed to update room last_activity (room=%d): %v", room.ID, err)
+	}
 
 	return nil
 }
@@ -1593,17 +1687,22 @@ func closePlaySession(userID int64, roomID int64) {
 		return
 	}
 
-	db.DB.Exec(`
+	if _, err := db.DB.Exec(`
 		UPDATE play_sessions
 		SET left_at = CURRENT_TIMESTAMP,
 			duration_minutes = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - joined_at))::INTEGER / 60
-		WHERE id = $1`, sessionID)
+		WHERE id = $1`, sessionID); err != nil {
+		log.Printf("[rooms] warning: failed to close play session (session=%d): %v", sessionID, err)
+		return
+	}
 
 	var durationMinutes int
 	db.DB.QueryRow("SELECT COALESCE(duration_minutes, 0) FROM play_sessions WHERE id = $1", sessionID).Scan(&durationMinutes)
 	if durationMinutes > 0 {
 		hours := float64(durationMinutes) / 60.0
-		db.DB.Exec("UPDATE users SET total_play_hours = total_play_hours + $1 WHERE id = $2", hours, userID)
+		if _, err := db.DB.Exec("UPDATE users SET total_play_hours = total_play_hours + $1 WHERE id = $2", hours, userID); err != nil {
+			log.Printf("[rooms] warning: failed to update total_play_hours (user=%d): %v", userID, err)
+		}
 	}
 }
 

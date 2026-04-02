@@ -58,6 +58,31 @@ type HubStatusResp struct {
 	TrafficOut uint64 `json:"traffic_out"`
 }
 
+// ---------- input validation ----------
+
+var validNameRe = regexp.MustCompile(`^[a-zA-Z0-9_\-\.]+$`)
+
+func isValidSoftEtherName(name string) bool {
+	return len(name) >= 1 && len(name) <= 64 && validNameRe.MatchString(name)
+}
+
+// ---------- concurrency limit ----------
+
+var vpncmdSemaphore = make(chan struct{}, 10) // max 10 concurrent vpncmd processes
+
+func acquireVpncmd() bool {
+	select {
+	case vpncmdSemaphore <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func releaseVpncmd() {
+	<-vpncmdSemaphore
+}
+
 // ---------- helpers ----------
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -129,6 +154,16 @@ func (h *Handler) HubCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "hub_name and subnet are required")
 		return
 	}
+	if !isValidSoftEtherName(req.HubName) {
+		writeErr(w, http.StatusBadRequest, "invalid hub_name: only alphanumeric, underscore, hyphen, dot allowed")
+		return
+	}
+
+	if !acquireVpncmd() {
+		writeErr(w, http.StatusServiceUnavailable, "server busy, try again")
+		return
+	}
+	defer releaseVpncmd()
 
 	start, end, mask, gw, err := SubnetParams(req.Subnet)
 	if err != nil {
@@ -212,6 +247,16 @@ func (h *Handler) HubDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "hub_name is required")
 		return
 	}
+	if !isValidSoftEtherName(req.HubName) {
+		writeErr(w, http.StatusBadRequest, "invalid hub_name: only alphanumeric, underscore, hyphen, dot allowed")
+		return
+	}
+
+	if !acquireVpncmd() {
+		writeErr(w, http.StatusServiceUnavailable, "server busy, try again")
+		return
+	}
+	defer releaseVpncmd()
 
 	if _, err := h.SE.ServerCmd("HubDelete", req.HubName); err != nil {
 		writeErr(w, http.StatusInternalServerError, "HubDelete failed: "+err.Error())
@@ -229,6 +274,16 @@ func (h *Handler) HubStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "hub_name is required")
 		return
 	}
+	if !isValidSoftEtherName(hubName) {
+		writeErr(w, http.StatusBadRequest, "invalid hub_name: only alphanumeric, underscore, hyphen, dot allowed")
+		return
+	}
+
+	if !acquireVpncmd() {
+		writeErr(w, http.StatusServiceUnavailable, "server busy, try again")
+		return
+	}
+	defer releaseVpncmd()
 
 	out, err := h.SE.HubCmd(hubName, "StatusGet")
 	if err != nil {
@@ -259,7 +314,11 @@ func parseHubStatus(output string) HubStatusResp {
 	for _, key := range []string{"Sessions (Client)", "Num Sessions", "Sessions"} {
 		v := getValue(key)
 		if v != "" {
-			resp.Sessions, _ = strconv.Atoi(strings.ReplaceAll(v, ",", ""))
+			var err error
+			resp.Sessions, err = strconv.Atoi(strings.ReplaceAll(v, ",", ""))
+			if err != nil {
+				log.Printf("[hub/status] failed to parse %q value %q: %v", key, v, err)
+			}
 			break
 		}
 	}
@@ -271,7 +330,11 @@ func parseHubStatus(output string) HubStatusResp {
 		inStr = getValue("Incoming Data Size")
 	}
 	if m := numRe.FindString(strings.ReplaceAll(inStr, ",", "")); m != "" {
-		resp.TrafficIn, _ = strconv.ParseUint(m, 10, 64)
+		var err error
+		resp.TrafficIn, err = strconv.ParseUint(m, 10, 64)
+		if err != nil {
+			log.Printf("[hub/status] failed to parse TrafficIn value %q: %v", m, err)
+		}
 	}
 
 	outStr := getValue("Outgoing Unicast Total Size")
@@ -279,7 +342,11 @@ func parseHubStatus(output string) HubStatusResp {
 		outStr = getValue("Outgoing Data Size")
 	}
 	if m := numRe.FindString(strings.ReplaceAll(outStr, ",", "")); m != "" {
-		resp.TrafficOut, _ = strconv.ParseUint(m, 10, 64)
+		var err error
+		resp.TrafficOut, err = strconv.ParseUint(m, 10, 64)
+		if err != nil {
+			log.Printf("[hub/status] failed to parse TrafficOut value %q: %v", m, err)
+		}
 	}
 
 	return resp
@@ -296,6 +363,20 @@ func (h *Handler) UserCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "hub_name, username, and password are required")
 		return
 	}
+	if !isValidSoftEtherName(req.HubName) {
+		writeErr(w, http.StatusBadRequest, "invalid hub_name: only alphanumeric, underscore, hyphen, dot allowed")
+		return
+	}
+	if !isValidSoftEtherName(req.Username) {
+		writeErr(w, http.StatusBadRequest, "invalid username: only alphanumeric, underscore, hyphen, dot allowed")
+		return
+	}
+
+	if !acquireVpncmd() {
+		writeErr(w, http.StatusServiceUnavailable, "server busy, try again")
+		return
+	}
+	defer releaseVpncmd()
 
 	if _, err := h.SE.HubCmd(req.HubName, "UserCreate", req.Username,
 		"/GROUP:none", "/REALNAME:none", "/NOTE:none"); err != nil {
@@ -324,6 +405,20 @@ func (h *Handler) UserDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "hub_name and username are required")
 		return
 	}
+	if !isValidSoftEtherName(req.HubName) {
+		writeErr(w, http.StatusBadRequest, "invalid hub_name: only alphanumeric, underscore, hyphen, dot allowed")
+		return
+	}
+	if !isValidSoftEtherName(req.Username) {
+		writeErr(w, http.StatusBadRequest, "invalid username: only alphanumeric, underscore, hyphen, dot allowed")
+		return
+	}
+
+	if !acquireVpncmd() {
+		writeErr(w, http.StatusServiceUnavailable, "server busy, try again")
+		return
+	}
+	defer releaseVpncmd()
 
 	if _, err := h.SE.HubCmd(req.HubName, "UserDelete", req.Username); err != nil {
 		writeErr(w, http.StatusInternalServerError, "UserDelete failed: "+err.Error())
@@ -345,6 +440,20 @@ func (h *Handler) UserDisconnect(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "hub_name and username are required")
 		return
 	}
+	if !isValidSoftEtherName(req.HubName) {
+		writeErr(w, http.StatusBadRequest, "invalid hub_name: only alphanumeric, underscore, hyphen, dot allowed")
+		return
+	}
+	if !isValidSoftEtherName(req.Username) {
+		writeErr(w, http.StatusBadRequest, "invalid username: only alphanumeric, underscore, hyphen, dot allowed")
+		return
+	}
+
+	if !acquireVpncmd() {
+		writeErr(w, http.StatusServiceUnavailable, "server busy, try again")
+		return
+	}
+	defer releaseVpncmd()
 
 	out, err := h.SE.HubCmd(req.HubName, "SessionList")
 	if err != nil {
@@ -398,6 +507,12 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 
 // Stats handles GET /stats — returns aggregate node statistics.
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
+	if !acquireVpncmd() {
+		writeErr(w, http.StatusServiceUnavailable, "server busy, try again")
+		return
+	}
+	defer releaseVpncmd()
+
 	uptimeSecs := int64(time.Since(h.StartAt).Seconds())
 
 	hubCount := 0
@@ -435,7 +550,10 @@ func ParseServerStatusInt(output, key string) int {
 			if len(parts) >= 2 {
 				valStr := strings.TrimSpace(parts[len(parts)-1])
 				valStr = strings.ReplaceAll(valStr, ",", "")
-				v, _ := strconv.Atoi(valStr)
+				v, err := strconv.Atoi(valStr)
+				if err != nil {
+					log.Printf("[stats] failed to parse %q value %q: %v", key, valStr, err)
+				}
 				return v
 			}
 		}
@@ -545,6 +663,20 @@ func (h *Handler) UserTraffic(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "hub_name and username are required")
 		return
 	}
+	if !isValidSoftEtherName(hubName) {
+		writeErr(w, http.StatusBadRequest, "invalid hub_name: only alphanumeric, underscore, hyphen, dot allowed")
+		return
+	}
+	if !isValidSoftEtherName(username) {
+		writeErr(w, http.StatusBadRequest, "invalid username: only alphanumeric, underscore, hyphen, dot allowed")
+		return
+	}
+
+	if !acquireVpncmd() {
+		writeErr(w, http.StatusServiceUnavailable, "server busy, try again")
+		return
+	}
+	defer releaseVpncmd()
 
 	out, err := h.SE.HubCmd(hubName, "UserGet", username)
 	if err != nil {
@@ -578,7 +710,10 @@ func parseTrafficBytes(output, key string) uint64 {
 		valStr = strings.ReplaceAll(valStr, ",", "")
 		valStr = strings.ReplaceAll(valStr, "bytes", "")
 		valStr = strings.TrimSpace(valStr)
-		v, _ := strconv.ParseUint(valStr, 10, 64)
+		v, err := strconv.ParseUint(valStr, 10, 64)
+		if err != nil {
+			log.Printf("[user/traffic] failed to parse %q value %q: %v", key, valStr, err)
+		}
 		return v
 	}
 	return 0
